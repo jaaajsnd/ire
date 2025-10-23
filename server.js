@@ -98,6 +98,34 @@ app.get('/get-token', async (req, res) => {
   }
 });
 
+// Check payment status endpoint
+app.get('/api/check-payment/:checkoutId', async (req, res) => {
+  const { checkoutId } = req.params;
+  
+  try {
+    const response = await axios.get(`${SUMUP_BASE_URL}/checkouts/${checkoutId}`, {
+      headers: {
+        'Authorization': `Bearer ${SUMUP_API_KEY}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    const checkout = response.data;
+    console.log('Checkout status:', checkout.status);
+    
+    res.json({
+      status: checkout.status,
+      checkout: checkout
+    });
+  } catch (error) {
+    console.error('Error checking payment:', error.message);
+    res.status(500).json({
+      status: 'error',
+      message: error.message
+    });
+  }
+});
+
 // Checkout pagina - hier komt de klant naartoe vanaf Shopify
 app.get('/checkout', async (req, res) => {
   const { amount, currency, order_id, return_url } = req.query;
@@ -270,6 +298,12 @@ app.get('/checkout', async (req, res) => {
             .back-button:hover {
               color: #000;
             }
+            .loading {
+              display: none;
+              text-align: center;
+              padding: 20px;
+              color: #666;
+            }
           </style>
         </head>
         <body>
@@ -280,6 +314,7 @@ app.get('/checkout', async (req, res) => {
             
             <div id="error-message" class="error"></div>
             <div id="success-message" class="success"></div>
+            <div id="loading-message" class="loading">Processing payment...</div>
             
             <!-- Customer Details Section -->
             <div class="section">
@@ -349,6 +384,7 @@ app.get('/checkout', async (req, res) => {
           <script>
             // Store customer data when payment is successful
             let customerData = {};
+            const checkoutId = '${checkout.id}';
 
             function validateCustomerInfo() {
               const firstName = document.getElementById('firstName').value.trim();
@@ -377,15 +413,39 @@ app.get('/checkout', async (req, res) => {
               return true;
             }
 
+            async function checkPaymentStatus() {
+              try {
+                const response = await fetch('/api/check-payment/' + checkoutId);
+                const data = await response.json();
+                
+                console.log('Payment status:', data);
+                
+                if (data.status === 'PAID') {
+                  document.getElementById('loading-message').style.display = 'none';
+                  document.getElementById('success-message').style.display = 'block';
+                  document.getElementById('success-message').innerHTML = '✓ Payment successful! Redirecting...';
+                  
+                  setTimeout(() => {
+                    const returnUrl = '${return_url || APP_URL + '/payment/success'}';
+                    const separator = returnUrl.includes('?') ? '&' : '?';
+                    window.location.href = returnUrl + separator + 'checkout_id=' + checkoutId;
+                  }, 2000);
+                }
+              } catch (error) {
+                console.error('Error checking payment status:', error);
+              }
+            }
+
             // Initialize SumUp Card Widget
             SumUpCard.mount({
-              checkoutId: '${checkout.id}',
+              checkoutId: checkoutId,
               showSubmitButton: true,
               onResponse: function(type, body) {
                 console.log('SumUp response:', type, body);
                 
                 const errorDiv = document.getElementById('error-message');
                 const successDiv = document.getElementById('success-message');
+                const loadingDiv = document.getElementById('loading-message');
                 
                 switch(type) {
                   case 'sent':
@@ -395,28 +455,34 @@ app.get('/checkout', async (req, res) => {
                       errorDiv.innerHTML = '✗ Please fill in all required fields';
                       return;
                     }
+                    loadingDiv.style.display = 'block';
+                    break;
+                    
+                  case 'auth-screen':
+                    // 3DS authentication in progress
+                    loadingDiv.style.display = 'block';
+                    loadingDiv.innerHTML = 'Verifying payment... Please complete 3D Secure if prompted.';
                     break;
                     
                   case 'success':
-                    successDiv.style.display = 'block';
-                    successDiv.innerHTML = '✓ Payment successful! Redirecting...';
+                    loadingDiv.style.display = 'block';
+                    loadingDiv.innerHTML = 'Processing payment...';
                     
-                    // Save customer data (you can send this to your backend)
+                    // Save customer data
                     console.log('Customer data:', customerData);
                     
-                    setTimeout(() => {
-                      const returnUrl = '${return_url || APP_URL + '/payment/success'}';
-                      const separator = returnUrl.includes('?') ? '&' : '?';
-                      window.location.href = returnUrl + separator + 'checkout_id=${checkout.id}';
-                    }, 2000);
+                    // Check payment status after a short delay
+                    setTimeout(() => checkPaymentStatus(), 2000);
                     break;
                     
                   case 'error':
+                    loadingDiv.style.display = 'none';
                     errorDiv.style.display = 'block';
                     errorDiv.innerHTML = '✗ Payment failed: ' + (body.message || 'Please try again');
                     break;
                     
                   case 'invalid':
+                    loadingDiv.style.display = 'none';
                     errorDiv.style.display = 'block';
                     errorDiv.innerHTML = '✗ Invalid payment details. Please check your card information.';
                     break;
