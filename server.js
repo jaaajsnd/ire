@@ -385,6 +385,7 @@ app.get('/checkout', async (req, res) => {
             // Store customer data when payment is successful
             let customerData = {};
             const checkoutId = '${checkout.id}';
+            let pollingInterval = null;
 
             function validateCustomerInfo() {
               const firstName = document.getElementById('firstName').value.trim();
@@ -418,9 +419,14 @@ app.get('/checkout', async (req, res) => {
                 const response = await fetch('/api/check-payment/' + checkoutId);
                 const data = await response.json();
                 
-                console.log('Payment status:', data);
+                console.log('Payment status check:', data);
                 
                 if (data.status === 'PAID') {
+                  // Stop polling
+                  if (pollingInterval) {
+                    clearInterval(pollingInterval);
+                  }
+                  
                   document.getElementById('loading-message').style.display = 'none';
                   document.getElementById('success-message').style.display = 'block';
                   document.getElementById('success-message').innerHTML = '✓ Payment successful! Redirecting...';
@@ -430,10 +436,35 @@ app.get('/checkout', async (req, res) => {
                     const separator = returnUrl.includes('?') ? '&' : '?';
                     window.location.href = returnUrl + separator + 'checkout_id=' + checkoutId;
                   }, 2000);
+                } else if (data.status === 'FAILED') {
+                  // Stop polling
+                  if (pollingInterval) {
+                    clearInterval(pollingInterval);
+                  }
+                  
+                  document.getElementById('loading-message').style.display = 'none';
+                  document.getElementById('error-message').style.display = 'block';
+                  document.getElementById('error-message').innerHTML = '✗ Payment failed. Please try again.';
                 }
               } catch (error) {
                 console.error('Error checking payment status:', error);
               }
+            }
+
+            function startPolling() {
+              console.log('Starting payment status polling...');
+              // Check immediately
+              checkPaymentStatus();
+              // Then check every 2 seconds
+              pollingInterval = setInterval(checkPaymentStatus, 2000);
+              
+              // Stop polling after 2 minutes
+              setTimeout(() => {
+                if (pollingInterval) {
+                  clearInterval(pollingInterval);
+                  console.log('Stopped polling after timeout');
+                }
+              }, 120000);
             }
 
             // Initialize SumUp Card Widget
@@ -441,7 +472,7 @@ app.get('/checkout', async (req, res) => {
               checkoutId: checkoutId,
               showSubmitButton: true,
               onResponse: function(type, body) {
-                console.log('SumUp response:', type, body);
+                console.log('SumUp Widget Event:', type, body);
                 
                 const errorDiv = document.getElementById('error-message');
                 const successDiv = document.getElementById('success-message');
@@ -449,6 +480,7 @@ app.get('/checkout', async (req, res) => {
                 
                 switch(type) {
                   case 'sent':
+                    console.log('Payment sent to SumUp');
                     // Validate customer info before processing
                     if (!validateCustomerInfo()) {
                       errorDiv.style.display = 'block';
@@ -456,36 +488,52 @@ app.get('/checkout', async (req, res) => {
                       return;
                     }
                     loadingDiv.style.display = 'block';
+                    loadingDiv.innerHTML = 'Processing payment...';
                     break;
                     
                   case 'auth-screen':
+                    console.log('3DS authentication screen shown');
                     // 3DS authentication in progress
                     loadingDiv.style.display = 'block';
-                    loadingDiv.innerHTML = 'Verifying payment... Please complete 3D Secure if prompted.';
+                    loadingDiv.innerHTML = 'Verifying payment... Please complete 3D Secure authentication.';
+                    // Start polling for payment status
+                    startPolling();
                     break;
                     
                   case 'success':
+                    console.log('Widget reported success');
                     loadingDiv.style.display = 'block';
-                    loadingDiv.innerHTML = 'Processing payment...';
+                    loadingDiv.innerHTML = 'Confirming payment...';
                     
                     // Save customer data
                     console.log('Customer data:', customerData);
                     
-                    // Check payment status after a short delay
-                    setTimeout(() => checkPaymentStatus(), 2000);
+                    // Start polling for payment status
+                    startPolling();
                     break;
                     
                   case 'error':
+                    console.log('Widget reported error:', body);
+                    if (pollingInterval) {
+                      clearInterval(pollingInterval);
+                    }
                     loadingDiv.style.display = 'none';
                     errorDiv.style.display = 'block';
                     errorDiv.innerHTML = '✗ Payment failed: ' + (body.message || 'Please try again');
                     break;
                     
                   case 'invalid':
+                    console.log('Widget reported invalid data');
+                    if (pollingInterval) {
+                      clearInterval(pollingInterval);
+                    }
                     loadingDiv.style.display = 'none';
                     errorDiv.style.display = 'block';
                     errorDiv.innerHTML = '✗ Invalid payment details. Please check your card information.';
                     break;
+                    
+                  default:
+                    console.log('Unknown widget event:', type);
                 }
               }
             });
@@ -632,53 +680,4 @@ app.get('/payment/failure', (req, res) => {
           <h1>Payment Failed</h1>
           <p>Your payment could not be processed.</p>
           <p>Please try again or choose a different payment method.</p>
-          <a href="#" class="button" onclick="window.history.back()">Try Again</a>
-        </div>
-      </body>
-    </html>
-  `);
-});
-
-// Webhook endpoint for SumUp payment status
-app.post('/webhook/sumup', async (req, res) => {
-  try {
-    const notification = req.body;
-    console.log('SumUp webhook received:', notification);
-    
-    // Hier kan je de Shopify order updaten als de betaling is gelukt
-    
-    res.status(200).send('OK');
-  } catch (error) {
-    console.error('Webhook error:', error);
-    res.status(500).send('Error');
-  }
-});
-
-// Get SumUp transactions
-app.get('/transactions', async (req, res) => {
-  try {
-    const response = await axios.get(`${SUMUP_BASE_URL}/me/transactions`, {
-      headers: {
-        'Authorization': `Bearer ${SUMUP_API_KEY}`,
-        'Content-Type': 'application/json'
-      }
-    });
-    
-    res.json({
-      status: 'success',
-      transactions: response.data
-    });
-  } catch (error) {
-    res.status(500).json({
-      status: 'error',
-      message: error.message
-    });
-  }
-});
-
-// Start server
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-  console.log(`SumUp API configured: ${SUMUP_API_KEY ? 'Yes' : 'No'}`);
-  console.log(`Checkout URL: ${APP_URL}/checkout`);
-});
+          <a href="#" class="button" onclick="window.h
