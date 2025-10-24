@@ -179,18 +179,12 @@ app.get('/checkout', async (req, res) => {
   const checkoutRef = order_id ? `shopify-${order_id}-${Date.now()}` : `shopify-${Date.now()}`;
 
   try {
-    // Get customer data from query params if available
-    const customer_email = req.query.customer_email || 'customer@example.com';
-    const customer_name = req.query.customer_name || 'John Murphy';
-    
     const checkoutData = {
       checkout_reference: checkoutRef,
       amount: parseFloat(amount),
       currency: currency.toUpperCase(),
       pay_to_email: 'yurkovsergii@gmail.com',
-      description: `Shopify Order ${order_id || ''}`,
-      redirect_url: `${APP_URL}/payment/callback?order_id=${order_id || ''}&return_url=${encodeURIComponent(return_url || '')}`,
-      merchant_code: 'SUMUP'
+      description: `Shopify Order ${order_id || ''}`
     };
 
     console.log('Creating SumUp checkout:', checkoutData);
