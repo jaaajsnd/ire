@@ -17,11 +17,6 @@ const SUMUP_CLIENT_ID = process.env.SUMUP_CLIENT_ID;
 const SUMUP_BASE_URL = 'https://api.sumup.com/v0.1';
 const APP_URL = process.env.APP_URL || `http://localhost:${PORT}`;
 
-// Shopify credentials
-const SHOPIFY_STORE = process.env.SHOPIFY_STORE || 'gdicex-x1.myshopify.com';
-const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
-const SHOPIFY_API_VERSION = '2024-10';
-
 // In-memory storage voor orders (in productie gebruik je een database)
 const pendingOrders = new Map();
 
@@ -99,153 +94,6 @@ app.get('/get-token', async (req, res) => {
       message: error.message,
       details: error.response?.data,
       hint: 'You might need a Client Secret for this'
-    });
-  }
-});
-
-// Create Shopify order
-async function createShopifyOrder(customerData, cartData, checkoutId, transactionData) {
-  try {
-    console.log('Creating Shopify order...');
-    console.log('Customer data:', customerData);
-    console.log('Cart data:', cartData);
-    
-    // Prepare order data
-    const orderData = {
-      order: {
-        email: customerData.email,
-        financial_status: 'paid',
-        fulfillment_status: null,
-        send_receipt: true,
-        send_fulfillment_receipt: false,
-        note: `Pagado via SumUp. Checkout ID: ${checkoutId}`,
-        line_items: cartData.items.map(item => ({
-          variant_id: item.variant_id,
-          quantity: item.quantity,
-          price: (item.price / 100).toFixed(2)
-        })),
-        customer: {
-          first_name: customerData.firstName,
-          last_name: customerData.lastName,
-          email: customerData.email,
-          phone: customerData.phone || ''
-        },
-        billing_address: {
-          first_name: customerData.firstName,
-          last_name: customerData.lastName,
-          address1: customerData.address,
-          phone: customerData.phone || '',
-          city: customerData.city,
-          zip: customerData.postalCode,
-          country: customerData.country
-        },
-        shipping_address: {
-          first_name: customerData.firstName,
-          last_name: customerData.lastName,
-          address1: customerData.address,
-          phone: customerData.phone || '',
-          city: customerData.city,
-          zip: customerData.postalCode,
-          country: customerData.country
-        },
-        transactions: [
-          {
-            kind: 'sale',
-            status: 'success',
-            amount: (cartData.total_price / 100).toFixed(2),
-            currency: cartData.currency || 'EUR',
-            gateway: 'SumUp',
-            authorization: transactionData.transaction_code || checkoutId
-          }
-        ],
-        tags: 'SumUp, Paid'
-      }
-    };
-
-    console.log('Sending order to Shopify:', JSON.stringify(orderData, null, 2));
-
-    const response = await axios.post(
-      `https://${SHOPIFY_STORE}/admin/api/${SHOPIFY_API_VERSION}/orders.json`,
-      orderData,
-      {
-        headers: {
-          'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
-          'Content-Type': 'application/json'
-        }
-      }
-    );
-
-    console.log('Shopify order created successfully:', response.data.order.id);
-    return response.data.order;
-
-  } catch (error) {
-    console.error('Error creating Shopify order:', error.message);
-    console.error('Error details:', error.response?.data);
-    throw error;
-  }
-}
-
-// Save customer data endpoint
-app.post('/api/save-customer-data', async (req, res) => {
-  try {
-    const { checkoutId, customerData, cartData } = req.body;
-    
-    console.log('Saving customer data for checkout:', checkoutId);
-    console.log('Customer:', customerData);
-    
-    // Get transaction details from SumUp
-    const checkoutResponse = await axios.get(`${SUMUP_BASE_URL}/checkouts/${checkoutId}`, {
-      headers: {
-        'Authorization': `Bearer ${SUMUP_API_KEY}`,
-        'Content-Type': 'application/json'
-      }
-    });
-    
-    const checkout = checkoutResponse.data;
-    
-    // Check if there's a successful transaction
-    let transactionData = {};
-    if (checkout.transactions && checkout.transactions.length > 0) {
-      const successfulTxn = checkout.transactions.find(txn => txn.status === 'SUCCESSFUL');
-      if (successfulTxn) {
-        transactionData = successfulTxn;
-      }
-    }
-    
-    // If we have cart data, create Shopify order
-    if (cartData && cartData.items && cartData.items.length > 0) {
-      try {
-        const shopifyOrder = await createShopifyOrder(customerData, cartData, checkoutId, transactionData);
-        console.log('Shopify order created:', shopifyOrder.id);
-        
-        res.json({
-          status: 'success',
-          message: 'Customer data saved and Shopify order created',
-          shopify_order_id: shopifyOrder.id,
-          shopify_order_number: shopifyOrder.order_number
-        });
-      } catch (shopifyError) {
-        console.error('Failed to create Shopify order, but customer data saved');
-        res.json({
-          status: 'partial_success',
-          message: 'Customer data saved but Shopify order creation failed',
-          error: shopifyError.message
-        });
-      }
-    } else {
-      // Just save customer data without creating order
-      console.log('No cart data provided, skipping Shopify order creation');
-      res.json({
-        status: 'success',
-        message: 'Customer data saved'
-      });
-    }
-    
-  } catch (error) {
-    console.error('Error in save-customer-data:', error.message);
-    res.status(500).json({
-      status: 'error',
-      message: error.message
     });
   }
 });
@@ -333,7 +181,7 @@ app.get('/api/check-payment/:checkoutId', async (req, res) => {
 
 // Checkout pagina - hier komt de klant naartoe vanaf Shopify
 app.get('/checkout', async (req, res) => {
-  const { amount, currency, order_id, return_url, cart_token } = req.query;
+  const { amount, currency, order_id, return_url } = req.query;
   
   if (!amount || !currency) {
     return res.status(400).send('Faltan parámetros requeridos: monto y moneda');
@@ -371,7 +219,6 @@ app.get('/checkout', async (req, res) => {
     if (order_id) {
       pendingOrders.set(checkout.id, {
         order_id,
-        cart_token,
         amount,
         currency,
         return_url,
@@ -590,24 +437,8 @@ app.get('/checkout', async (req, res) => {
           <script>
             // Store customer data when payment is successful
             let customerData = {};
-            let cartData = null;
             const checkoutId = '${checkout.id}';
             let pollingInterval = null;
-
-            // Get cart data from Shopify
-            async function getCartData() {
-              try {
-                const response = await fetch('https://gdicex-x1.myshopify.com/cart.js');
-                const cart = await response.json();
-                cartData = cart;
-                console.log('Cart data loaded:', cartData);
-              } catch (error) {
-                console.error('Error loading cart data:', error);
-              }
-            }
-
-            // Load cart data on page load
-            getCartData();
 
             function validateCustomerInfo() {
               const firstName = document.getElementById('firstName').value.trim();
@@ -649,20 +480,19 @@ app.get('/checkout', async (req, res) => {
                     clearInterval(pollingInterval);
                   }
                   
-                  // Send customer data and cart data to backend to create Shopify order
+                  // Send customer data to backend
                   await fetch('/api/save-customer-data', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                       checkoutId: checkoutId,
-                      customerData: customerData,
-                      cartData: cartData
+                      customerData: customerData
                     })
                   });
                   
                   document.getElementById('loading-message').style.display = 'none';
                   document.getElementById('success-message').style.display = 'block';
-                  document.getElementById('success-message').innerHTML = '✓ ¡Pago exitoso! Creando pedido...';
+                  document.getElementById('success-message').innerHTML = '✓ ¡Pago exitoso! Redirigiendo...';
                   
                   setTimeout(() => {
                     const returnUrl = '${return_url || APP_URL + '/payment/success'}';
@@ -865,4 +695,122 @@ app.get('/payment/success', (req, res) => {
           p { color: #666; line-height: 1.6; }
           .button {
             display: inline-block;
-            margin-top:
+            margin-top: 20px;
+            padding: 12px 30px;
+            background: #4CAF50;
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            font-weight: bold;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="success-box">
+          <div class="checkmark">✓</div>
+          <h1>¡Pago Exitoso!</h1>
+          <p>Tu pago ha sido procesado con éxito.</p>
+          <p>Recibirás un correo de confirmación en breve.</p>
+          ${checkout_id ? `<p style="font-size: 12px; color: #999;">ID de pago: ${checkout_id}</p>` : ''}
+          <a href="#" class="button" onclick="window.close()">Cerrar</a>
+        </div>
+      </body>
+    </html>
+  `);
+});
+
+// Payment failure pagina
+app.get('/payment/failure', (req, res) => {
+  res.send(`
+    <html>
+      <head>
+        <title>Pago Fallido</title>
+        <style>
+          body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            padding: 50px;
+            background: #f5f5f5;
+          }
+          .error-box {
+            background: white;
+            padding: 40px;
+            border-radius: 10px;
+            max-width: 500px;
+            margin: 0 auto;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+          }
+          .cross {
+            color: #f44336;
+            font-size: 60px;
+          }
+          h1 { color: #333; }
+          p { color: #666; line-height: 1.6; }
+          .button {
+            display: inline-block;
+            margin-top: 20px;
+            padding: 12px 30px;
+            background: #000;
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            font-weight: bold;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="error-box">
+          <div class="cross">✗</div>
+          <h1>Pago Fallido</h1>
+          <p>Tu pago no pudo ser procesado.</p>
+          <p>Por favor, inténtalo de nuevo o elige otro método de pago.</p>
+          <a href="#" class="button" onclick="window.history.back()">Intentar de Nuevo</a>
+        </div>
+      </body>
+    </html>
+  `);
+});
+
+// Webhook endpoint for SumUp payment status
+app.post('/webhook/sumup', async (req, res) => {
+  try {
+    const notification = req.body;
+    console.log('SumUp webhook received:', notification);
+    
+    // Hier kan je de Shopify order updaten als de betaling is gelukt
+    
+    res.status(200).send('OK');
+  } catch (error) {
+    console.error('Webhook error:', error);
+    res.status(500).send('Error');
+  }
+});
+
+// Get SumUp transactions
+app.get('/transactions', async (req, res) => {
+  try {
+    const response = await axios.get(`${SUMUP_BASE_URL}/me/transactions`, {
+      headers: {
+        'Authorization': `Bearer ${SUMUP_API_KEY}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    res.json({
+      status: 'success',
+      transactions: response.data
+    });
+  } catch (error) {
+    res.status(500).json({
+      status: 'error',
+      message: error.message
+    });
+  }
+});
+
+// Start server
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+  console.log(`SumUp API configured: ${SUMUP_API_KEY ? 'Yes' : 'No'}`);
+  console.log(`Checkout URL: ${APP_URL}/checkout`);
+});
