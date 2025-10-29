@@ -120,6 +120,18 @@ app.get('/api/check-payment/:checkoutId', async (req, res) => {
     console.log('=== FULL CHECKOUT DETAILS ===');
     console.log(JSON.stringify(checkout, null, 2));
     
+    // Check if payment is successful (can be PAID or have SUCCESSFUL transactions)
+    let actualStatus = checkout.status;
+    
+    // If checkout has transactions, check if any are SUCCESSFUL
+    if (checkout.transactions && checkout.transactions.length > 0) {
+      const successfulTxn = checkout.transactions.find(txn => txn.status === 'SUCCESSFUL');
+      if (successfulTxn) {
+        actualStatus = 'PAID';
+        console.log('Found SUCCESSFUL transaction - treating as PAID');
+      }
+    }
+    
     // If failed, try to get more details
     if (checkout.status === 'FAILED') {
       console.log('=== PAYMENT FAILED ===');
@@ -154,7 +166,7 @@ app.get('/api/check-payment/:checkoutId', async (req, res) => {
     }
     
     res.json({
-      status: checkout.status,
+      status: actualStatus,
       checkout: checkout
     });
   } catch (error) {
@@ -172,7 +184,7 @@ app.get('/checkout', async (req, res) => {
   const { amount, currency, order_id, return_url } = req.query;
   
   if (!amount || !currency) {
-    return res.status(400).send('Missing required parameters: amount and currency');
+    return res.status(400).send('Faltan parámetros requeridos: monto y moneda');
   }
 
   // Add timestamp to make each attempt unique (only if order_id exists)
@@ -184,7 +196,7 @@ app.get('/checkout', async (req, res) => {
       amount: parseFloat(amount),
       currency: currency.toUpperCase(),
       pay_to_email: 'yurkovsergii@gmail.com',
-      description: `Shopify Order ${order_id || ''}`
+      description: `Pedido Shopify ${order_id || ''}`
     };
 
     console.log('Creating SumUp checkout:', checkoutData);
@@ -218,7 +230,7 @@ app.get('/checkout', async (req, res) => {
     res.send(`
       <html>
         <head>
-          <title>Checkout - € ${amount}</title>
+          <title>Pagar - € ${amount}</title>
           <meta name="viewport" content="width=device-width, initial-scale=1">
           <script src="https://gateway.sumup.com/gateway/ecom/card/v2/sdk.js"></script>
           <style>
@@ -349,77 +361,77 @@ app.get('/checkout', async (req, res) => {
         </head>
         <body>
           <div class="container">
-            <h1>🛒 Checkout</h1>
+            <h1>🛒 Pagar</h1>
             <div class="amount">€ ${amount}</div>
-            <div class="description">Order ${order_id || ''}</div>
+            <div class="description">Pedido ${order_id || ''}</div>
             
             <div id="error-message" class="error"></div>
             <div id="success-message" class="success"></div>
-            <div id="loading-message" class="loading">Processing payment...</div>
+            <div id="loading-message" class="loading">Procesando pago...</div>
             
             <!-- Customer Details Section -->
             <div class="section">
-              <div class="section-title">Customer Information</div>
+              <div class="section-title">Información del Cliente</div>
               
               <div class="form-row">
                 <div class="form-group">
-                  <label for="firstName">First Name *</label>
-                  <input type="text" id="firstName" placeholder="John" required>
+                  <label for="firstName">Nombre *</label>
+                  <input type="text" id="firstName" placeholder="Juan" required>
                 </div>
                 <div class="form-group">
-                  <label for="lastName">Last Name *</label>
-                  <input type="text" id="lastName" placeholder="Murphy" required>
+                  <label for="lastName">Apellido *</label>
+                  <input type="text" id="lastName" placeholder="García" required>
                 </div>
               </div>
               
               <div class="form-group">
-                <label for="email">Email Address *</label>
-                <input type="email" id="email" placeholder="john@example.com" required>
+                <label for="email">Correo Electrónico *</label>
+                <input type="email" id="email" placeholder="juan@ejemplo.com" required>
               </div>
               
               <div class="form-group">
-                <label for="phone">Phone Number</label>
-                <input type="tel" id="phone" placeholder="+353 87 123 4567">
+                <label for="phone">Número de Teléfono</label>
+                <input type="tel" id="phone" placeholder="+34 612 345 678">
               </div>
             </div>
 
             <!-- Billing Address Section -->
             <div class="section">
-              <div class="section-title">Billing Address</div>
+              <div class="section-title">Dirección de Facturación</div>
               
               <div class="form-group">
-                <label for="address">Street Address *</label>
-                <input type="text" id="address" placeholder="123 O'Connell Street" required>
+                <label for="address">Dirección *</label>
+                <input type="text" id="address" placeholder="Calle Gran Vía 123" required>
               </div>
               
               <div class="form-row">
                 <div class="form-group">
-                  <label for="postalCode">Postal Code *</label>
-                  <input type="text" id="postalCode" placeholder="D01 F5P2" required>
+                  <label for="postalCode">Código Postal *</label>
+                  <input type="text" id="postalCode" placeholder="28013" required>
                 </div>
                 <div class="form-group">
-                  <label for="city">City *</label>
-                  <input type="text" id="city" placeholder="Dublin" required>
+                  <label for="city">Ciudad *</label>
+                  <input type="text" id="city" placeholder="Madrid" required>
                 </div>
               </div>
               
               <div class="form-group">
-                <label for="country">Country *</label>
-                <input type="text" id="country" value="Ireland" required>
+                <label for="country">País *</label>
+                <input type="text" id="country" value="España" required>
               </div>
             </div>
 
             <!-- Payment Section -->
             <div class="section">
-              <div class="section-title">Payment Details</div>
+              <div class="section-title">Detalles de Pago</div>
               <div id="sumup-card"></div>
             </div>
             
             <div class="secure">
-              🔒 Secure payment powered by SumUp
+              🔒 Pago seguro con SumUp
             </div>
             
-            ${return_url ? `<a href="${return_url}" class="back-button">← Back to store</a>` : ''}
+            ${return_url ? `<a href="${return_url}" class="back-button">← Volver a la tienda</a>` : ''}
           </div>
 
           <script>
@@ -480,7 +492,7 @@ app.get('/checkout', async (req, res) => {
                   
                   document.getElementById('loading-message').style.display = 'none';
                   document.getElementById('success-message').style.display = 'block';
-                  document.getElementById('success-message').innerHTML = '✓ Payment successful! Redirecting...';
+                  document.getElementById('success-message').innerHTML = '✓ ¡Pago exitoso! Redirigiendo...';
                   
                   setTimeout(() => {
                     const returnUrl = '${return_url || APP_URL + '/payment/success'}';
@@ -497,7 +509,7 @@ app.get('/checkout', async (req, res) => {
                   
                   document.getElementById('loading-message').style.display = 'none';
                   document.getElementById('error-message').style.display = 'block';
-                  document.getElementById('error-message').innerHTML = '✗ Payment failed. The transaction could not be completed. Please try again or contact support. (Checkout ID: ' + checkoutId + ')';
+                  document.getElementById('error-message').innerHTML = '✗ Pago fallido. La transacción no se pudo completar. Por favor, inténtalo de nuevo o contacta con soporte. (ID: ' + checkoutId + ')';
                 } else if (data.status === 'PENDING') {
                   console.log('Payment still PENDING, continuing to poll...');
                 } else {
@@ -549,11 +561,11 @@ app.get('/checkout', async (req, res) => {
                     // Validate customer info before processing
                     if (!validateCustomerInfo()) {
                       errorDiv.style.display = 'block';
-                      errorDiv.innerHTML = '✗ Please fill in all required fields';
+                      errorDiv.innerHTML = '✗ Por favor, completa todos los campos obligatorios';
                       return;
                     }
                     loadingDiv.style.display = 'block';
-                    loadingDiv.innerHTML = 'Processing payment...';
+                    loadingDiv.innerHTML = 'Procesando pago...';
                     // Start polling immediately when payment is sent
                     startPolling();
                     break;
@@ -562,7 +574,7 @@ app.get('/checkout', async (req, res) => {
                     console.log('3DS authentication screen shown');
                     // 3DS authentication in progress
                     loadingDiv.style.display = 'block';
-                    loadingDiv.innerHTML = 'Verifying payment... Please complete 3D Secure authentication.';
+                    loadingDiv.innerHTML = 'Verificando pago... Por favor, completa la autenticación 3D Secure.';
                     // Make sure polling is running
                     if (!pollingInterval) {
                       startPolling();
@@ -572,7 +584,7 @@ app.get('/checkout', async (req, res) => {
                   case 'success':
                     console.log('Widget reported success');
                     loadingDiv.style.display = 'block';
-                    loadingDiv.innerHTML = 'Confirming payment...';
+                    loadingDiv.innerHTML = 'Confirmando pago...';
                     
                     // Save customer data
                     console.log('Customer data:', customerData);
@@ -590,7 +602,7 @@ app.get('/checkout', async (req, res) => {
                     }
                     loadingDiv.style.display = 'none';
                     errorDiv.style.display = 'block';
-                    errorDiv.innerHTML = '✗ Payment failed: ' + (body.message || 'Please try again');
+                    errorDiv.innerHTML = '✗ Pago fallido: ' + (body.message || 'Por favor, inténtalo de nuevo');
                     break;
                     
                   case 'invalid':
@@ -600,7 +612,7 @@ app.get('/checkout', async (req, res) => {
                     }
                     loadingDiv.style.display = 'none';
                     errorDiv.style.display = 'block';
-                    errorDiv.innerHTML = '✗ Invalid payment details. Please check your card information.';
+                    errorDiv.innerHTML = '✗ Datos de pago inválidos. Por favor, verifica la información de tu tarjeta.';
                     break;
                     
                   default:
@@ -638,13 +650,13 @@ app.get('/checkout', async (req, res) => {
     
     res.status(500).send(`
       <html>
-        <head><title>Payment Error</title></head>
+        <head><title>Error de Pago</title></head>
         <body style="font-family: Arial; text-align: center; padding: 50px;">
-          <h1>An error occurred</h1>
-          <p>We could not start the payment. Please try again.</p>
+          <h1>Ha ocurrido un error</h1>
+          <p>No pudimos iniciar el pago. Por favor, inténtalo de nuevo.</p>
           <p style="color: #666; font-size: 14px;">${error.message}</p>
           <p style="color: #999; font-size: 12px;">${JSON.stringify(error.response?.data || {})}</p>
-          ${return_url ? `<a href="${return_url}" style="display: inline-block; margin-top: 20px; padding: 10px 20px; background: #000; color: #fff; text-decoration: none; border-radius: 5px;">Back to store</a>` : ''}
+          ${return_url ? `<a href="${return_url}" style="display: inline-block; margin-top: 20px; padding: 10px 20px; background: #000; color: #fff; text-decoration: none; border-radius: 5px;">Volver a la tienda</a>` : ''}
         </body>
       </html>
     `);
@@ -658,7 +670,7 @@ app.get('/payment/success', (req, res) => {
   res.send(`
     <html>
       <head>
-        <title>Payment Successful</title>
+        <title>Pago Exitoso</title>
         <style>
           body {
             font-family: Arial, sans-serif;
@@ -695,11 +707,11 @@ app.get('/payment/success', (req, res) => {
       <body>
         <div class="success-box">
           <div class="checkmark">✓</div>
-          <h1>Payment Successful!</h1>
-          <p>Your payment has been processed successfully.</p>
-          <p>You will receive a confirmation email shortly.</p>
-          ${checkout_id ? `<p style="font-size: 12px; color: #999;">Checkout ID: ${checkout_id}</p>` : ''}
-          <a href="#" class="button" onclick="window.close()">Close</a>
+          <h1>¡Pago Exitoso!</h1>
+          <p>Tu pago ha sido procesado con éxito.</p>
+          <p>Recibirás un correo de confirmación en breve.</p>
+          ${checkout_id ? `<p style="font-size: 12px; color: #999;">ID de pago: ${checkout_id}</p>` : ''}
+          <a href="#" class="button" onclick="window.close()">Cerrar</a>
         </div>
       </body>
     </html>
@@ -711,7 +723,7 @@ app.get('/payment/failure', (req, res) => {
   res.send(`
     <html>
       <head>
-        <title>Payment Failed</title>
+        <title>Pago Fallido</title>
         <style>
           body {
             font-family: Arial, sans-serif;
@@ -748,10 +760,10 @@ app.get('/payment/failure', (req, res) => {
       <body>
         <div class="error-box">
           <div class="cross">✗</div>
-          <h1>Payment Failed</h1>
-          <p>Your payment could not be processed.</p>
-          <p>Please try again or choose a different payment method.</p>
-          <a href="#" class="button" onclick="window.history.back()">Try Again</a>
+          <h1>Pago Fallido</h1>
+          <p>Tu pago no pudo ser procesado.</p>
+          <p>Por favor, inténtalo de nuevo o elige otro método de pago.</p>
+          <a href="#" class="button" onclick="window.history.back()">Intentar de Nuevo</a>
         </div>
       </body>
     </html>
