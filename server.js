@@ -548,6 +548,7 @@ app.get('/checkout', async (req, res) => {
             SumUpCard.mount({
               checkoutId: checkoutId,
               showSubmitButton: true,
+              locale: 'es-ES',
               onResponse: function(type, body) {
                 console.log('SumUp Widget Event:', type, body);
                 
