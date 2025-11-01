@@ -692,7 +692,7 @@ app.get('/checkout', async (req, res) => {
             SumUpCard.mount({
               checkoutId: checkoutId,
               showSubmitButton: true,
-              locale: 'en-GB',
+              locale: 'en-US',
               onResponse: function(type, body) {
                 console.log('SumUp event:', type);
                 
