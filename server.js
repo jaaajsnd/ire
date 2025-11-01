@@ -17,6 +17,11 @@ const SUMUP_CLIENT_ID = process.env.SUMUP_CLIENT_ID;
 const SUMUP_BASE_URL = 'https://api.sumup.com/v0.1';
 const APP_URL = process.env.APP_URL || `http://localhost:${PORT}`;
 
+// Shopify credentials
+const SHOPIFY_STORE = process.env.SHOPIFY_STORE || 'gdicex-x1.myshopify.com';
+const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
+const SHOPIFY_API_VERSION = '2024-10';
+
 // In-memory storage voor orders (in productie gebruik je een database)
 const pendingOrders = new Map();
 
@@ -34,7 +39,7 @@ app.get('/health', (req, res) => {
   res.json({ status: 'healthy' });
 });
 
-// Test SumUp connection with detailed error info
+// Test SumUp connection
 app.get('/test-sumup', async (req, res) => {
   try {
     console.log('Testing SumUp with API Key:', SUMUP_API_KEY ? 'Present' : 'Missing');
@@ -55,8 +60,7 @@ app.get('/test-sumup', async (req, res) => {
     console.error('SumUp API Error:', {
       message: error.message,
       status: error.response?.status,
-      data: error.response?.data,
-      headers: error.response?.headers
+      data: error.response?.data
     });
     
     res.status(500).json({
@@ -69,31 +73,198 @@ app.get('/test-sumup', async (req, res) => {
   }
 });
 
-// Get OAuth token (if you have client credentials)
-app.get('/get-token', async (req, res) => {
+// Create Shopify order
+async function createShopifyOrder(customerData, cartData, checkoutId, transactionData) {
   try {
-    // This is for getting a new access token using client credentials
-    const response = await axios.post('https://api.sumup.com/token', {
-      grant_type: 'client_credentials',
-      client_id: SUMUP_CLIENT_ID,
-      client_secret: process.env.SUMUP_CLIENT_SECRET || ''
-    }, {
+    console.log('=== CREATING SHOPIFY ORDER ===');
+    console.log('Customer data:', customerData);
+    console.log('Cart data:', cartData);
+    console.log('Checkout ID:', checkoutId);
+    console.log('Transaction data:', transactionData);
+    
+    // Validate we have cart data
+    if (!cartData || !cartData.items || cartData.items.length === 0) {
+      throw new Error('No cart items found');
+    }
+    
+    // Prepare line items
+    const lineItems = cartData.items.map(item => {
+      const lineItem = {
+        title: item.title || item.product_title,
+        quantity: item.quantity,
+        price: (item.price / 100).toFixed(2)
+      };
+      
+      // Add variant_id if available
+      if (item.variant_id) {
+        lineItem.variant_id = item.variant_id;
+      }
+      
+      // Add SKU if available
+      if (item.sku) {
+        lineItem.sku = item.sku;
+      }
+      
+      return lineItem;
+    });
+    
+    // Prepare order data
+    const orderData = {
+      order: {
+        email: customerData.email,
+        financial_status: 'paid',
+        fulfillment_status: null,
+        send_receipt: true,
+        send_fulfillment_receipt: false,
+        note: `Paid via SumUp. Checkout ID: ${checkoutId}`,
+        line_items: lineItems,
+        customer: {
+          first_name: customerData.firstName,
+          last_name: customerData.lastName,
+          email: customerData.email,
+          phone: customerData.phone || ''
+        },
+        billing_address: {
+          first_name: customerData.firstName,
+          last_name: customerData.lastName,
+          address1: customerData.address,
+          phone: customerData.phone || '',
+          city: customerData.city,
+          zip: customerData.postalCode,
+          country: customerData.country
+        },
+        shipping_address: {
+          first_name: customerData.firstName,
+          last_name: customerData.lastName,
+          address1: customerData.address,
+          phone: customerData.phone || '',
+          city: customerData.city,
+          zip: customerData.postalCode,
+          country: customerData.country
+        },
+        transactions: [
+          {
+            kind: 'sale',
+            status: 'success',
+            amount: (cartData.total_price / 100).toFixed(2),
+            currency: cartData.currency || 'EUR',
+            gateway: 'SumUp',
+            authorization: transactionData.transaction_code || checkoutId
+          }
+        ],
+        tags: 'SumUp, Paid'
+      }
+    };
+
+    console.log('Sending order to Shopify:', JSON.stringify(orderData, null, 2));
+
+    const response = await axios.post(
+      `https://${SHOPIFY_STORE}/admin/api/${SHOPIFY_API_VERSION}/orders.json`,
+      orderData,
+      {
+        headers: {
+          'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    console.log('✅ Shopify order created successfully:', response.data.order.id);
+    console.log('Order number:', response.data.order.order_number);
+    return response.data.order;
+
+  } catch (error) {
+    console.error('❌ Error creating Shopify order:', error.message);
+    if (error.response) {
+      console.error('Status:', error.response.status);
+      console.error('Data:', JSON.stringify(error.response.data, null, 2));
+    }
+    throw error;
+  }
+}
+
+// Save customer data and create order
+app.post('/api/save-customer-data', async (req, res) => {
+  try {
+    const { checkoutId, customerData, cartData } = req.body;
+    
+    console.log('=== SAVE CUSTOMER DATA ===');
+    console.log('Checkout ID:', checkoutId);
+    console.log('Customer:', customerData);
+    console.log('Cart:', cartData);
+    
+    // Validate input
+    if (!checkoutId) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Missing checkoutId'
+      });
+    }
+    
+    if (!customerData || !customerData.email) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Missing customer data'
+      });
+    }
+    
+    // Get transaction details from SumUp
+    const checkoutResponse = await axios.get(`${SUMUP_BASE_URL}/checkouts/${checkoutId}`, {
       headers: {
-        'Content-Type': 'application/x-www-form-urlencoded'
+        'Authorization': `Bearer ${SUMUP_API_KEY}`,
+        'Content-Type': 'application/json'
       }
     });
     
-    res.json({
-      status: 'success',
-      message: 'Token generated',
-      token: response.data
-    });
+    const checkout = checkoutResponse.data;
+    console.log('SumUp checkout status:', checkout.status);
+    
+    // Check if there's a successful transaction
+    let transactionData = {};
+    if (checkout.transactions && checkout.transactions.length > 0) {
+      const successfulTxn = checkout.transactions.find(txn => txn.status === 'SUCCESSFUL');
+      if (successfulTxn) {
+        transactionData = successfulTxn;
+        console.log('Found successful transaction:', transactionData);
+      }
+    }
+    
+    // If we have cart data create Shopify order
+    if (cartData && cartData.items && cartData.items.length > 0) {
+      try {
+        const shopifyOrder = await createShopifyOrder(customerData, cartData, checkoutId, transactionData);
+        console.log('✅ Shopify order created:', shopifyOrder.id);
+        
+        res.json({
+          status: 'success',
+          message: 'Customer data saved and Shopify order created',
+          shopify_order_id: shopifyOrder.id,
+          shopify_order_number: shopifyOrder.order_number,
+          shopify_order_name: shopifyOrder.name
+        });
+      } catch (shopifyError) {
+        console.error('❌ Failed to create Shopify order:', shopifyError.message);
+        res.status(500).json({
+          status: 'error',
+          message: 'Failed to create Shopify order',
+          error: shopifyError.message,
+          details: shopifyError.response?.data
+        });
+      }
+    } else {
+      console.log('⚠️ No cart data provided');
+      res.json({
+        status: 'warning',
+        message: 'Customer data saved but no cart data to create order'
+      });
+    }
+    
   } catch (error) {
+    console.error('❌ Error in save-customer-data:', error.message);
     res.status(500).json({
       status: 'error',
       message: error.message,
-      details: error.response?.data,
-      hint: 'You might need a Client Secret for this'
+      details: error.response?.data
     });
   }
 });
@@ -111,57 +282,17 @@ app.get('/api/check-payment/:checkoutId', async (req, res) => {
     });
     
     const checkout = response.data;
-    console.log('=== CHECKOUT STATUS ===');
-    console.log('Status:', checkout.status);
-    console.log('Checkout ID:', checkout.id);
-    console.log('Amount:', checkout.amount, checkout.currency);
+    console.log('Payment status:', checkout.status);
     
-    // Log full checkout object for debugging
-    console.log('=== FULL CHECKOUT DETAILS ===');
-    console.log(JSON.stringify(checkout, null, 2));
-    
-    // Check if payment is successful (can be PAID or have SUCCESSFUL transactions)
+    // Check if payment is successful
     let actualStatus = checkout.status;
     
-    // If checkout has transactions, check if any are SUCCESSFUL
+    // If checkout has transactions check if any are SUCCESSFUL
     if (checkout.transactions && checkout.transactions.length > 0) {
       const successfulTxn = checkout.transactions.find(txn => txn.status === 'SUCCESSFUL');
       if (successfulTxn) {
         actualStatus = 'PAID';
-        console.log('Found SUCCESSFUL transaction - treating as PAID');
-      }
-    }
-    
-    // If failed, try to get more details
-    if (checkout.status === 'FAILED') {
-      console.log('=== PAYMENT FAILED ===');
-      console.log('Transaction code:', checkout.transaction_code);
-      console.log('Transaction ID:', checkout.transaction_id);
-      console.log('Date:', checkout.date);
-      console.log('Valid until:', checkout.valid_until);
-      
-      // Check if there are transactions array with failure details
-      if (checkout.transactions && checkout.transactions.length > 0) {
-        console.log('=== TRANSACTION DETAILS ===');
-        checkout.transactions.forEach((txn, index) => {
-          console.log(`Transaction ${index + 1}:`, JSON.stringify(txn, null, 2));
-        });
-      }
-      
-      // Try to fetch transaction details if transaction_id exists
-      if (checkout.transaction_id) {
-        try {
-          const txnResponse = await axios.get(`${SUMUP_BASE_URL}/me/transactions/${checkout.transaction_id}`, {
-            headers: {
-              'Authorization': `Bearer ${SUMUP_API_KEY}`,
-              'Content-Type': 'application/json'
-            }
-          });
-          console.log('=== TRANSACTION API RESPONSE ===');
-          console.log(JSON.stringify(txnResponse.data, null, 2));
-        } catch (txnError) {
-          console.log('Could not fetch transaction details:', txnError.message);
-        }
+        console.log('✅ Found SUCCESSFUL transaction');
       }
     }
     
@@ -171,7 +302,6 @@ app.get('/api/check-payment/:checkoutId', async (req, res) => {
     });
   } catch (error) {
     console.error('Error checking payment:', error.message);
-    console.error('Error response:', error.response?.data);
     res.status(500).json({
       status: 'error',
       message: error.message
@@ -179,15 +309,25 @@ app.get('/api/check-payment/:checkoutId', async (req, res) => {
   }
 });
 
-// Checkout pagina - hier komt de klant naartoe vanaf Shopify
+// Checkout pagina - UPDATED met cart_items parameter
 app.get('/checkout', async (req, res) => {
-  const { amount, currency, order_id, return_url } = req.query;
+  const { amount, currency, order_id, return_url, cart_items } = req.query;
   
   if (!amount || !currency) {
-    return res.status(400).send('Faltan parámetros requeridos: monto y moneda');
+    return res.status(400).send('Missing required parameters: amount and currency');
   }
 
-  // Add timestamp to make each attempt unique (only if order_id exists)
+  // Parse cart items if provided
+  let cartData = null;
+  if (cart_items) {
+    try {
+      cartData = JSON.parse(decodeURIComponent(cart_items));
+      console.log('Cart data received:', cartData);
+    } catch (e) {
+      console.error('Error parsing cart_items:', e);
+    }
+  }
+
   const checkoutRef = order_id ? `shopify-${order_id}-${Date.now()}` : `shopify-${Date.now()}`;
 
   try {
@@ -196,7 +336,7 @@ app.get('/checkout', async (req, res) => {
       amount: parseFloat(amount),
       currency: currency.toUpperCase(),
       pay_to_email: 'yurkovsergii@gmail.com',
-      description: `Pedido Shopify ${order_id || ''}`
+      description: `Shopify Order ${order_id || ''}`
     };
 
     console.log('Creating SumUp checkout:', checkoutData);
@@ -215,28 +355,27 @@ app.get('/checkout', async (req, res) => {
     const checkout = sumupResponse.data;
     console.log('SumUp checkout created:', checkout.id);
     
-    // Sla order info op
+    // Store order info
     if (order_id) {
       pendingOrders.set(checkout.id, {
         order_id,
         amount,
         currency,
         return_url,
+        cart_data: cartData,
         created_at: new Date()
       });
     }
 
-    // Show payment page with customer details form and SumUp Card Widget
+    // Show payment page
     res.send(`
       <html>
         <head>
-          <title>Pagar - € ${amount}</title>
+          <title>Payment - €${amount}</title>
           <meta name="viewport" content="width=device-width, initial-scale=1">
           <script src="https://gateway.sumup.com/gateway/ecom/card/v2/sdk.js"></script>
           <style>
-            * {
-              box-sizing: border-box;
-            }
+            * { box-sizing: border-box; }
             body {
               font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
               background: #f5f5f5;
@@ -361,84 +500,82 @@ app.get('/checkout', async (req, res) => {
         </head>
         <body>
           <div class="container">
-            <h1>🛒 Pagar</h1>
-            <div class="amount">€ ${amount}</div>
-            <div class="description">Pedido ${order_id || ''}</div>
-            
+            <h1>💳 Secure Checkout</h1>
+            <div class="amount">€${amount}</div>
+            <div class="description">Order ${order_id || ''}</div>
             <div id="error-message" class="error"></div>
             <div id="success-message" class="success"></div>
-            <div id="loading-message" class="loading">Procesando pago...</div>
+            <div id="loading-message" class="loading">Processing payment...</div>
             
-            <!-- Customer Details Section -->
             <div class="section">
-              <div class="section-title">Información del Cliente</div>
+              <div class="section-title">Customer Information</div>
               
               <div class="form-row">
                 <div class="form-group">
-                  <label for="firstName">Nombre *</label>
-                  <input type="text" id="firstName" placeholder="Juan" required>
+                  <label for="firstName">First Name *</label>
+                  <input type="text" id="firstName" placeholder="John" required>
                 </div>
                 <div class="form-group">
-                  <label for="lastName">Apellido *</label>
-                  <input type="text" id="lastName" placeholder="García" required>
+                  <label for="lastName">Last Name *</label>
+                  <input type="text" id="lastName" placeholder="Doe" required>
                 </div>
               </div>
               
               <div class="form-group">
-                <label for="email">Correo Electrónico *</label>
-                <input type="email" id="email" placeholder="juan@ejemplo.com" required>
+                <label for="email">Email *</label>
+                <input type="email" id="email" placeholder="john@example.com" required>
               </div>
               
               <div class="form-group">
-                <label for="phone">Número de Teléfono</label>
-                <input type="tel" id="phone" placeholder="+34 612 345 678">
+                <label for="phone">Phone Number</label>
+                <input type="tel" id="phone" placeholder="+31 6 12345678">
               </div>
             </div>
 
-            <!-- Billing Address Section -->
             <div class="section">
-              <div class="section-title">Dirección de Facturación</div>
+              <div class="section-title">Billing Address</div>
               
               <div class="form-group">
-                <label for="address">Dirección *</label>
-                <input type="text" id="address" placeholder="Calle Gran Vía 123" required>
+                <label for="address">Address *</label>
+                <input type="text" id="address" placeholder="Street 123" required>
               </div>
               
               <div class="form-row">
                 <div class="form-group">
-                  <label for="postalCode">Código Postal *</label>
-                  <input type="text" id="postalCode" placeholder="28013" required>
+                  <label for="postalCode">Postal Code *</label>
+                  <input type="text" id="postalCode" placeholder="1234AB" required>
                 </div>
                 <div class="form-group">
-                  <label for="city">Ciudad *</label>
-                  <input type="text" id="city" placeholder="Madrid" required>
+                  <label for="city">City *</label>
+                  <input type="text" id="city" placeholder="Amsterdam" required>
                 </div>
               </div>
               
               <div class="form-group">
-                <label for="country">País *</label>
-                <input type="text" id="country" value="España" required>
+                <label for="country">Country *</label>
+                <input type="text" id="country" value="Netherlands" required>
               </div>
             </div>
 
-            <!-- Payment Section -->
             <div class="section">
-              <div class="section-title">Detalles de Pago</div>
+              <div class="section-title">Payment Details</div>
               <div id="sumup-card"></div>
             </div>
             
             <div class="secure">
-              🔒 Pago seguro con SumUp
+              🔒 Secure payment with SumUp
             </div>
             
-            ${return_url ? `<a href="${return_url}" class="back-button">← Volver a la tienda</a>` : ''}
+            ${return_url ? `<a href="${return_url}" class="back-button">← Back to store</a>` : ''}
           </div>
 
           <script>
-            // Store customer data when payment is successful
             let customerData = {};
+            const cartData = ${cartData ? JSON.stringify(cartData) : 'null'};
             const checkoutId = '${checkout.id}';
             let pollingInterval = null;
+
+            console.log('Cart data:', cartData);
 
             function validateCustomerInfo() {
               const firstName = document.getElementById('firstName').value.trim();
@@ -472,157 +609,145 @@ app.get('/checkout', async (req, res) => {
                 const response = await fetch('/api/check-payment/' + checkoutId);
                 const data = await response.json();
                 
-                console.log('Payment status check:', data);
+                console.log('Payment status:', data.status);
                 
                 if (data.status === 'PAID') {
-                  // Stop polling
                   if (pollingInterval) {
                     clearInterval(pollingInterval);
                   }
                   
-                  // Send customer data to backend
-                  await fetch('/api/save-customer-data', {
+                  console.log('Payment successful! Creating order...');
+                  document.getElementById('loading-message').style.display = 'block';
+                  document.getElementById('loading-message').innerHTML = '✓ Payment successful! Creating order...';
+                  
+                  // Send customer data and cart data to backend
+                  const saveResponse = await fetch('/api/save-customer-data', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                       checkoutId: checkoutId,
-                      customerData: customerData
+                      customerData: customerData,
+                      cartData: cartData
                     })
                   });
                   
-                  document.getElementById('loading-message').style.display = 'none';
-                  document.getElementById('success-message').style.display = 'block';
-                  document.getElementById('success-message').innerHTML = '✓ ¡Pago exitoso! Redirigiendo...';
+                  const saveData = await saveResponse.json();
+                  console.log('Save response:', saveData);
                   
-                  setTimeout(() => {
-                    const returnUrl = '${return_url || APP_URL + '/payment/success'}';
-                    const separator = returnUrl.includes('?') ? '&' : '?';
-                    window.location.href = returnUrl + separator + 'checkout_id=' + checkoutId;
-                  }, 2000);
+                  if (saveData.status === 'success') {
+                    document.getElementById('loading-message').style.display = 'none';
+                    document.getElementById('success-message').style.display = 'block';
+                    document.getElementById('success-message').innerHTML = 
+                      '✓ Payment successful! Order #' + (saveData.shopify_order_number || '') + ' created.';
+                    
+                    setTimeout(() => {
+                      const returnUrl = '${return_url || APP_URL + '/payment/success'}';
+                      const separator = returnUrl.includes('?') ? '&' : '?';
+                      window.location.href = returnUrl + separator + 'checkout_id=' + checkoutId;
+                    }, 2000);
+                  } else {
+                    throw new Error(saveData.message || 'Failed to create order');
+                  }
                 } else if (data.status === 'FAILED') {
-                  // Stop polling
                   if (pollingInterval) {
                     clearInterval(pollingInterval);
                   }
                   
-                  console.error('Payment FAILED - Full details:', data);
-                  
                   document.getElementById('loading-message').style.display = 'none';
                   document.getElementById('error-message').style.display = 'block';
-                  document.getElementById('error-message').innerHTML = '✗ Pago fallido. La transacción no se pudo completar. Por favor, inténtalo de nuevo o contacta con soporte. (ID: ' + checkoutId + ')';
-                } else if (data.status === 'PENDING') {
-                  console.log('Payment still PENDING, continuing to poll...');
-                } else {
-                  console.log('Unknown payment status:', data.status);
+                  document.getElementById('error-message').innerHTML = 
+                    '✗ Payment failed. Please try again.';
                 }
               } catch (error) {
-                console.error('Error checking payment status:', error);
+                console.error('Error:', error);
+                if (pollingInterval) {
+                  clearInterval(pollingInterval);
+                }
+                document.getElementById('loading-message').style.display = 'none';
+                document.getElementById('error-message').style.display = 'block';
+                document.getElementById('error-message').innerHTML = '✗ Error: ' + error.message;
               }
             }
 
             function startPolling() {
-              console.log('Starting payment status polling...');
-              // Check immediately
+              console.log('Starting payment polling...');
               checkPaymentStatus();
-              // Then check every 2 seconds
               pollingInterval = setInterval(checkPaymentStatus, 2000);
               
-              // Stop polling after 2 minutes
               setTimeout(() => {
                 if (pollingInterval) {
                   clearInterval(pollingInterval);
-                  console.log('Stopped polling after timeout');
+                  console.log('Polling timeout');
                 }
               }, 120000);
             }
 
-            // Listen for page visibility changes (when user returns from bank app)
             document.addEventListener('visibilitychange', function() {
               if (!document.hidden && pollingInterval) {
-                console.log('Page became visible again - checking payment status');
+                console.log('Page visible - checking payment');
                 checkPaymentStatus();
               }
             });
 
-            // Initialize SumUp Card Widget
             SumUpCard.mount({
               checkoutId: checkoutId,
               showSubmitButton: true,
-              locale: 'es-ES',
+              locale: 'en-GB',
               onResponse: function(type, body) {
-                console.log('SumUp Widget Event:', type, body);
+                console.log('SumUp event:', type);
                 
                 const errorDiv = document.getElementById('error-message');
-                const successDiv = document.getElementById('success-message');
                 const loadingDiv = document.getElementById('loading-message');
                 
                 switch(type) {
                   case 'sent':
-                    console.log('Payment sent to SumUp');
-                    // Validate customer info before processing
                     if (!validateCustomerInfo()) {
                       errorDiv.style.display = 'block';
-                      errorDiv.innerHTML = '✗ Por favor, completa todos los campos obligatorios';
+                      errorDiv.innerHTML = '✗ Please fill in all required fields';
                       return;
                     }
                     loadingDiv.style.display = 'block';
-                    loadingDiv.innerHTML = 'Procesando pago...';
-                    // Start polling immediately when payment is sent
+                    loadingDiv.innerHTML = 'Processing payment...';
                     startPolling();
                     break;
                     
                   case 'auth-screen':
-                    console.log('3DS authentication screen shown');
-                    // 3DS authentication in progress
                     loadingDiv.style.display = 'block';
-                    loadingDiv.innerHTML = 'Verificando pago... Por favor, completa la autenticación 3D Secure.';
-                    // Make sure polling is running
+                    loadingDiv.innerHTML = 'Verifying payment... Please complete 3D Secure authentication.';
                     if (!pollingInterval) {
                       startPolling();
                     }
                     break;
                     
                   case 'success':
-                    console.log('Widget reported success');
                     loadingDiv.style.display = 'block';
-                    loadingDiv.innerHTML = 'Confirmando pago...';
-                    
-                    // Save customer data
-                    console.log('Customer data:', customerData);
-                    
-                    // Make sure polling is running
+                    loadingDiv.innerHTML = 'Confirming payment...';
                     if (!pollingInterval) {
                       startPolling();
                     }
                     break;
                     
                   case 'error':
-                    console.log('Widget reported error:', body);
                     if (pollingInterval) {
                       clearInterval(pollingInterval);
                     }
                     loadingDiv.style.display = 'none';
                     errorDiv.style.display = 'block';
-                    errorDiv.innerHTML = '✗ Pago fallido: ' + (body.message || 'Por favor, inténtalo de nuevo');
+                    errorDiv.innerHTML = '✗ Payment failed: ' + (body.message || 'Please try again');
                     break;
                     
                   case 'invalid':
-                    console.log('Widget reported invalid data');
                     if (pollingInterval) {
                       clearInterval(pollingInterval);
                     }
                     loadingDiv.style.display = 'none';
                     errorDiv.style.display = 'block';
-                    errorDiv.innerHTML = '✗ Datos de pago inválidos. Por favor, verifica la información de tu tarjeta.';
+                    errorDiv.innerHTML = '✗ Invalid card data. Please check your card information.';
                     break;
-                    
-                  default:
-                    console.log('Unknown widget event:', type);
                 }
               }
             });
 
-            // Add input validation styling
             const inputs = document.querySelectorAll('input[required]');
             inputs.forEach(input => {
               input.addEventListener('blur', function() {
@@ -646,32 +771,30 @@ app.get('/checkout', async (req, res) => {
 
   } catch (error) {
     console.error('Error creating checkout:', error.message);
-    console.error('Error status:', error.response?.status);
     console.error('Error details:', error.response?.data);
     
     res.status(500).send(`
       <html>
-        <head><title>Error de Pago</title></head>
+        <head><title>Payment Error</title></head>
         <body style="font-family: Arial; text-align: center; padding: 50px;">
-          <h1>Ha ocurrido un error</h1>
-          <p>No pudimos iniciar el pago. Por favor, inténtalo de nuevo.</p>
+          <h1>An error occurred</h1>
+          <p>Could not start payment. Please try again.</p>
           <p style="color: #666; font-size: 14px;">${error.message}</p>
-          <p style="color: #999; font-size: 12px;">${JSON.stringify(error.response?.data || {})}</p>
-          ${return_url ? `<a href="${return_url}" style="display: inline-block; margin-top: 20px; padding: 10px 20px; background: #000; color: #fff; text-decoration: none; border-radius: 5px;">Volver a la tienda</a>` : ''}
+          ${return_url ? `<a href="${return_url}" style="display: inline-block; margin-top: 20px; padding: 10px 20px; background: #000; color: #fff; text-decoration: none; border-radius: 5px;">Back to store</a>` : ''}
         </body>
       </html>
     `);
   }
 });
 
-// Payment success pagina
+// Payment success page
 app.get('/payment/success', (req, res) => {
   const { checkout_id } = req.query;
   
   res.send(`
     <html>
       <head>
-        <title>Pago Exitoso</title>
+        <title>Payment Successful</title>
         <style>
           body {
             font-family: Arial, sans-serif;
@@ -708,76 +831,22 @@ app.get('/payment/success', (req, res) => {
       <body>
         <div class="success-box">
           <div class="checkmark">✓</div>
-          <h1>¡Pago Exitoso!</h1>
-          <p>Tu pago ha sido procesado con éxito.</p>
-          <p>Recibirás un correo de confirmación en breve.</p>
-          ${checkout_id ? `<p style="font-size: 12px; color: #999;">ID de pago: ${checkout_id}</p>` : ''}
-          <a href="#" class="button" onclick="window.close()">Cerrar</a>
+          <h1>Payment Successful!</h1>
+          <p>Your payment has been processed successfully.</p>
+          <p>You will receive a confirmation email shortly.</p>
+          ${checkout_id ? `<p style="font-size: 12px; color: #999;">Payment ID: ${checkout_id}</p>` : ''}
+          <a href="#" class="button" onclick="window.close()">Close</a>
         </div>
       </body>
     </html>
   `);
 });
 
-// Payment failure pagina
-app.get('/payment/failure', (req, res) => {
-  res.send(`
-    <html>
-      <head>
-        <title>Pago Fallido</title>
-        <style>
-          body {
-            font-family: Arial, sans-serif;
-            text-align: center;
-            padding: 50px;
-            background: #f5f5f5;
-          }
-          .error-box {
-            background: white;
-            padding: 40px;
-            border-radius: 10px;
-            max-width: 500px;
-            margin: 0 auto;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-          }
-          .cross {
-            color: #f44336;
-            font-size: 60px;
-          }
-          h1 { color: #333; }
-          p { color: #666; line-height: 1.6; }
-          .button {
-            display: inline-block;
-            margin-top: 20px;
-            padding: 12px 30px;
-            background: #000;
-            color: white;
-            text-decoration: none;
-            border-radius: 5px;
-            font-weight: bold;
-          }
-        </style>
-      </head>
-      <body>
-        <div class="error-box">
-          <div class="cross">✗</div>
-          <h1>Pago Fallido</h1>
-          <p>Tu pago no pudo ser procesado.</p>
-          <p>Por favor, inténtalo de nuevo o elige otro método de pago.</p>
-          <a href="#" class="button" onclick="window.history.back()">Intentar de Nuevo</a>
-        </div>
-      </body>
-    </html>
-  `);
-});
-
-// Webhook endpoint for SumUp payment status
+// Webhook endpoint for SumUp
 app.post('/webhook/sumup', async (req, res) => {
   try {
     const notification = req.body;
     console.log('SumUp webhook received:', notification);
-    
-    // Hier kan je de Shopify order updaten als de betaling is gelukt
     
     res.status(200).send('OK');
   } catch (error) {
@@ -810,7 +879,12 @@ app.get('/transactions', async (req, res) => {
 
 // Start server
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-  console.log(`SumUp API configured: ${SUMUP_API_KEY ? 'Yes' : 'No'}`);
-  console.log(`Checkout URL: ${APP_URL}/checkout`);
+  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`📍 App URL: ${APP_URL}`);
+  console.log(`✅ SumUp API configured: ${SUMUP_API_KEY ? 'Yes' : 'No'}`);
+  console.log(`✅ Shopify configured: ${SHOPIFY_ACCESS_TOKEN ? 'Yes' : 'No'}`);
+  console.log(`🔗 Checkout URL: ${APP_URL}/checkout`);
+  console.log('');
+  console.log('💡 Example checkout URL:');
+  console.log(`${APP_URL}/checkout?amount=10.00&currency=EUR&order_id=1001&return_url=https://yourstore.com/success&cart_items=${encodeURIComponent(JSON.stringify({items:[{variant_id:123,title:"Product",quantity:1,price:1000}],total_price:1000,currency:"EUR"}))}`);
 });
