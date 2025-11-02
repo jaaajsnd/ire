@@ -219,45 +219,13 @@ app.post('/api/save-customer-data', async (req, res) => {
     const checkout = checkoutResponse.data;
     console.log('SumUp checkout status:', checkout.status);
     
-    // Check if there's a successful transaction
-    let transactionData = {};
-    if (checkout.transactions && checkout.transactions.length > 0) {
-      const successfulTxn = checkout.transactions.find(txn => txn.status === 'SUCCESSFUL');
-      if (successfulTxn) {
-        transactionData = successfulTxn;
-        console.log('Found successful transaction:', transactionData);
-      }
-    }
+    // Just return success - no Shopify order creation
+    console.log('✅ Payment confirmed - customer data saved');
     
-    // If we have cart data create Shopify order
-    if (cartData && cartData.items && cartData.items.length > 0) {
-      try {
-        const shopifyOrder = await createShopifyOrder(customerData, cartData, checkoutId, transactionData);
-        console.log('✅ Shopify order created:', shopifyOrder.id);
-        
-        res.json({
-          status: 'success',
-          message: 'Customer data saved and Shopify order created',
-          shopify_order_id: shopifyOrder.id,
-          shopify_order_number: shopifyOrder.order_number,
-          shopify_order_name: shopifyOrder.name
-        });
-      } catch (shopifyError) {
-        console.error('❌ Failed to create Shopify order:', shopifyError.message);
-        res.status(500).json({
-          status: 'error',
-          message: 'Failed to create Shopify order',
-          error: shopifyError.message,
-          details: shopifyError.response?.data
-        });
-      }
-    } else {
-      console.log('⚠️ No cart data provided');
-      res.json({
-        status: 'warning',
-        message: 'Customer data saved but no cart data to create order'
-      });
-    }
+    res.json({
+      status: 'success',
+      message: 'Payment successful'
+    });
     
   } catch (error) {
     console.error('❌ Error in save-customer-data:', error.message);
@@ -618,7 +586,7 @@ app.get('/checkout', async (req, res) => {
                   
                   console.log('Payment successful! Creating order...');
                   document.getElementById('loading-message').style.display = 'block';
-                  document.getElementById('loading-message').innerHTML = '✓ Payment successful! Creating order...';
+                  document.getElementById('loading-message').innerHTML = '✓ Payment successful! Processing...';
                   
                   // Send customer data and cart data to backend
                   const saveResponse = await fetch('/api/save-customer-data', {
@@ -638,7 +606,7 @@ app.get('/checkout', async (req, res) => {
                     document.getElementById('loading-message').style.display = 'none';
                     document.getElementById('success-message').style.display = 'block';
                     document.getElementById('success-message').innerHTML = 
-                      '✓ Payment successful! Order #' + (saveData.shopify_order_number || '') + ' created.';
+                      '✓ Payment successful!';
                     
                     setTimeout(() => {
                       const returnUrl = '${return_url || APP_URL + '/payment/success'}';
@@ -646,7 +614,7 @@ app.get('/checkout', async (req, res) => {
                       window.location.href = returnUrl + separator + 'checkout_id=' + checkoutId;
                     }, 2000);
                   } else {
-                    throw new Error(saveData.message || 'Failed to create order');
+                    throw new Error(saveData.message || 'Failed to process payment');
                   }
                 } else if (data.status === 'FAILED') {
                   if (pollingInterval) {
