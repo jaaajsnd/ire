@@ -535,22 +535,22 @@ app.get('/checkout', async (req, res) => {
               <div class="form-row">
                 <div class="form-group">
                   <label for="firstName">First Name *</label>
-                  <input type="text" id="firstName" placeholder="John" required>
+                  <input type="text" id="firstName" placeholder="Sean" required>
                 </div>
                 <div class="form-group">
                   <label for="lastName">Last Name *</label>
-                  <input type="text" id="lastName" placeholder="Doe" required>
+                  <input type="text" id="lastName" placeholder="O'Brien" required>
                 </div>
               </div>
               
               <div class="form-group">
                 <label for="email">Email *</label>
-                <input type="email" id="email" placeholder="john@example.com" required>
+                <input type="email" id="email" placeholder="sean@example.ie" required>
               </div>
               
               <div class="form-group">
                 <label for="phone">Phone Number</label>
-                <input type="tel" id="phone" placeholder="+31 6 12345678">
+                <input type="tel" id="phone" placeholder="+353 85 123 4567">
               </div>
             </div>
 
@@ -559,23 +559,23 @@ app.get('/checkout', async (req, res) => {
               
               <div class="form-group">
                 <label for="address">Address *</label>
-                <input type="text" id="address" placeholder="Street 123" required>
+                <input type="text" id="address" placeholder="12 O'Connell Street" required>
               </div>
               
               <div class="form-row">
                 <div class="form-group">
-                  <label for="postalCode">Postal Code *</label>
-                  <input type="text" id="postalCode" placeholder="1234AB" required>
+                  <label for="postalCode">Eircode *</label>
+                  <input type="text" id="postalCode" placeholder="D01 F5P2" required>
                 </div>
                 <div class="form-group">
                   <label for="city">City *</label>
-                  <input type="text" id="city" placeholder="Amsterdam" required>
+                  <input type="text" id="city" placeholder="Dublin" required>
                 </div>
               </div>
               
               <div class="form-group">
                 <label for="country">Country *</label>
-                <input type="text" id="country" value="Netherlands" required>
+                <input type="text" id="country" value="Ireland" required>
               </div>
             </div>
 
