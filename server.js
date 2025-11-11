@@ -303,7 +303,6 @@ app.get('/checkout', async (req, res) => {
       checkout_reference: checkoutRef,
       amount: parseFloat(amount),
       currency: currency.toUpperCase(),
-      pay_to_email: 'yurkovsergii@gmail.com',
       description: `Shopify Order ${order_id || ''}`
     };
 
