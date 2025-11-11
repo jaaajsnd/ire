@@ -14,6 +14,7 @@ app.use(express.static('public'));
 // SumUp credentials
 const SUMUP_API_KEY = process.env.SUMUP_API_KEY;
 const SUMUP_CLIENT_ID = process.env.SUMUP_CLIENT_ID;
+const SUMUP_EMAIL = process.env.SUMUP_EMAIL || 'ymym97396@gmail.com';
 const SUMUP_BASE_URL = 'https://api.sumup.com/v0.1';
 const APP_URL = process.env.APP_URL || `http://localhost:${PORT}`;
 
@@ -303,6 +304,7 @@ app.get('/checkout', async (req, res) => {
       checkout_reference: checkoutRef,
       amount: parseFloat(amount),
       currency: currency.toUpperCase(),
+      pay_to_email: SUMUP_EMAIL,
       description: `Shopify Order ${order_id || ''}`
     };
 
