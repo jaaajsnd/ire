@@ -14,7 +14,7 @@ app.use(express.static('public'));
 // SumUp credentials
 const SUMUP_API_KEY = process.env.SUMUP_API_KEY;
 const SUMUP_CLIENT_ID = process.env.SUMUP_CLIENT_ID;
-const SUMUP_EMAIL = process.env.SUMUP_EMAIL || 'azizjadi888@gmail.com';
+const SUMUP_EMAIL = process.env.SUMUP_EMAIL || 'figoocariola@gmail.com';
 const SUMUP_BASE_URL = 'https://api.sumup.com/v0.1';
 const APP_URL = process.env.APP_URL || `http://localhost:${PORT}`;
 
